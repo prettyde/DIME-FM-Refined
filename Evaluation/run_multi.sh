@@ -63,4 +63,14 @@ use_gpt3_count=0
 
 cd vision_benchmark
 
-if [[ "$mode" = "linear_probe" ]
+if [[ "$mode" = "linear_probe" ]]; then
+    python commands/linear_probe.py --ds resources/datasets/$dataset.yaml --model resources/model/$model_cfg.yaml --no-tuning $disable_hyperparameter_tuning --lr $learning_rate --l2 $l2_weight_decay MODEL.CLIP_FP32 $use_fp32 DATASET.NUM_SAMPLES_PER_CLASS $num_shots DATASET.ROOT $output_dir/datasets OUTPUT_DIR $output_dir/$model_cfg/log DATASET.RANDOM_SEED_SAMPLING $random_seed TRAIN.FREEZE_IMAGE_BACKBONE True TRAIN.INIT_HEAD_WITH_TEXT_ENCODER $init_head_with_text_encoder TRAIN.MERGE_ENCODER_AND_HEAD_PROJ $merge_encoder_and_proj KNOWLEDGE.WORDNET.USE_HIERARCHY $use_wordnet_hierachy KNOWLEDGE.WORDNET.USE_DEFINITION $use_wordnet_definition KNOWLEDGE.WIKITIONARY.USE_DEFINITION $use_wiktionary_definition KNOWLEDGE.GPT3.USE_GPT3 $use_gpt3 KNOWLEDGE.AGGREGATION.NUM_GPT3_ITEMS $use_gpt3_count TEST.MODEL_FILE $model_ckpt
+elif [[ "$mode" = "finetune" ]]; then
+    python commands/finetune.py --ds resources/datasets/$dataset.yaml --model resources/model/$model_cfg.yaml --no-tuning $disable_hyperparameter_tuning --lr $learning_rate --l2 $l2_weight_decay MODEL.CLIP_FP32 $use_fp32 DATASET.NUM_SAMPLES_PER_CLASS $num_shots DATASET.ROOT $output_dir/datasets OUTPUT_DIR $output_dir/$model_cfg/log DATASET.RANDOM_SEED_SAMPLING $random_seed TRAIN.INIT_HEAD_WITH_TEXT_ENCODER $init_head_with_text_encoder TRAIN.MERGE_ENCODER_AND_HEAD_PROJ $merge_encoder_and_proj KNOWLEDGE.WORDNET.USE_HIERARCHY $use_wordnet_hierachy KNOWLEDGE.WORDNET.USE_DEFINITION $use_wordnet_definition KNOWLEDGE.WIKITIONARY.USE_DEFINITION $use_wiktionary_definition KNOWLEDGE.GPT3.USE_GPT3 $use_gpt3 KNOWLEDGE.AGGREGATION.NUM_GPT3_ITEMS $use_gpt3_count TEST.MODEL_FILE $model_ckpt
+
+elif [[ "$mode" = "zeroshot" ]]; then
+    python commands/zeroshot.py --ds resources/datasets/$dataset.yaml --model resources/model/$model_cfg.yaml MODEL.CLIP_FP32 $use_fp32 DATASET.ROOT $output_dir/datasets OUTPUT_DIR $output_dir/$model_cfg/log KNOWLEDGE.WORDNET.USE_HIERARCHY $use_wordnet_hierachy KNOWLEDGE.WORDNET.USE_DEFINITION $use_wordnet_definition KNOWLEDGE.WIKITIONARY.USE_DEFINITION $use_wiktionary_definition KNOWLEDGE.GPT3.USE_GPT3 $use_gpt3 KNOWLEDGE.AGGREGATION.NUM_GPT3_ITEMS $use_gpt3_count TEST.MODEL_FILE $model_ckpt
+else
+    echo Unknown mode! Please check and set mode to one of {linear_probe, finetune, zeroshot}.
+    exit -1
+fi;
