@@ -30,4 +30,9 @@ def submit_predictions(prediction_list, submit_by, config, track, task):
     model_info = {
         "name": config.MODEL.NAME,
         "author": config.MODEL.AUTHOR,
-        
+        "num_params_in_millions": config.MODEL.NUM_PARAMS_IN_M,
+        "pretrained_data": config.MODEL.PRETRAINED_DATA,
+        "creation_time": config.MODEL.CREATION_TIME
+    }
+
+    submit_model_to_leaderboard(model_info)
