@@ -57,4 +57,43 @@ class HFPTTokenizer(object):
         if isinstance(texts, str):
             texts = [texts]
 
- 
+        padding = 'max_length'
+
+        seqstart = []
+        seqtok = []
+        seqend = []
+
+        max_length = context_length
+
+        if (self.added_cls_token > 0):
+            seqstart = self.get_sot_token_list()
+            max_length = max_length - 1
+
+        if (self.added_sep_token > 0):
+            seqend = self.get_eot_token_list()
+            max_length = max_length - 1
+
+        tokens = self.tokenizer(
+                    texts, padding=padding,
+                    truncation=True,
+                    max_length=max_length
+                )['input_ids']
+
+        for i in range(len(tokens)):
+            tokens[i] = seqstart + tokens[i] + seqend
+
+        if (self.gpt_special_case):
+            for i in range(len(tokens)):
+                tokens[i][-1] = self.get_eot_token()
+
+        #print(str(tokens))
+
+        result = torch.Tensor(tokens).type(torch.LongTensor)
+
+        return result
+
+    def get_vocab_size(self):
+        return self.tokenizer.vocab_size
+
+    def __call__(self, texts: Union[str, List[str]], context_length: int = 77):
+        return self.tokenize(texts, context_length)
