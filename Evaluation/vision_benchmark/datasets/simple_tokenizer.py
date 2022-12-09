@@ -116,4 +116,56 @@ class SimpleTokenizer(object):
             if len(word) == 1:
                 break
             else:
-                pairs =
+                pairs = get_pairs(word)
+        word = ' '.join(word)
+        self.cache[token] = word
+        return word
+
+    def encode(self, text):
+        bpe_tokens = []
+        text = whitespace_clean(basic_clean(text)).lower()
+        for token in re.findall(self.pat, text):
+            token = ''.join(self.byte_encoder[b] for b in token.encode('utf-8'))
+            bpe_tokens.extend(self.encoder[bpe_token] for bpe_token in self.bpe(token).split(' '))
+        return bpe_tokens
+
+    def decode(self, tokens):
+        text = ''.join([self.decoder[token] for token in tokens])
+        text = bytearray([self.byte_decoder[c] for c in text]).decode('utf-8', errors="replace").replace('</w>', ' ')
+        return text
+
+    def get_vocab_size(self):
+        return 49408
+
+    def get_eot_token(self):
+        return self.encoder["<|endoftext|>"]
+
+    def get_sot_token(self):
+        return self.encoder["<|startoftext|>"]
+
+    def check_added_tokens(self):
+        return 0
+
+    def get_tokenizer_obj(self):
+        return None
+
+    def tokenize(self, texts: Union[str, List[str]], context_length: int = 77):
+        if isinstance(texts, str):
+            texts = [texts]
+
+        sot_token = self.encoder["<|startoftext|>"]
+        eot_token = self.encoder["<|endoftext|>"]
+        all_tokens = [[sot_token] + self.encode(text) + [eot_token] for text in texts]
+        result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
+
+        for i, tokens in enumerate(all_tokens):
+            if len(tokens) > context_length:
+                tokens = tokens[:context_length]
+                # raise RuntimeError(f"Input {texts[i]} is too long for context length {context_length}")
+
+            result[i, :len(tokens)] = torch.tensor(tokens)
+
+        return result
+
+    def __call__(self, texts: Union[str, List[str]], context_length: int = 77):
+        return self.tokenize(texts, context_length)
