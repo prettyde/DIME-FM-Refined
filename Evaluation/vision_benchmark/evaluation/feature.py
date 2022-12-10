@@ -578,3 +578,108 @@ def extract_text_features(config, tokenizer, args=None, model=None, return_numpy
 
         if config.MODEL.SPEC.get('DENSE_EVAL', False):
             class_embeddings = model.encode_text_dense(texts)
+        else:
+            class_embeddings = model.encode_text(texts)
+        class_embeddings /= class_embeddings.norm(dim=-1, keepdim=True)
+        class_embedding = class_embeddings.mean(dim=0)
+        class_embedding /= class_embedding.norm()
+        zeroshot_weights.append(class_embedding)
+    zeroshot_weights = torch.stack(zeroshot_weights, dim=1).to(device)
+    logging.info(f'=> Feature extraction duration time: {time.time() - start:.2f}s')
+    logging.info(f'=> Knowledge source count | knowledge_count: {wiki_count} | gpt3_count {gpt3_count} ')
+
+    if return_numpy:
+        return zeroshot_weights.cpu().detach().numpy()
+    else:
+        return zeroshot_weights
+
+
+def construct_dataloader(config, feature_type="image", test_split_only=False):
+    if config.DATASET.CENTER_CROP:
+        logging.info('Do center crop')
+        transform_clip = transforms.Compose([
+            transforms.Resize(config.TRAIN.IMAGE_SIZE[0], interpolation=Image.BICUBIC),
+            transforms.CenterCrop(size=config.TRAIN.IMAGE_SIZE),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=config.INPUT.MEAN, std=config.INPUT.STD),
+        ])
+    else:
+        logging.info('no center crop')
+        transform_clip = transforms.Compose([
+            transforms.Resize(config.TRAIN.IMAGE_SIZE, interpolation=Image.BICUBIC),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=config.INPUT.MEAN, std=config.INPUT.STD),
+        ])
+
+    from vision_datasets import Usages, DatasetTypes
+    from vision_datasets.pytorch import TorchDataset
+    hub = get_dataset_hub()
+    dataset_names = set([x['name'] for x in hub.list_data_version_and_types()])
+    if config.DATASET.DATASET in dataset_names:
+        vision_dataset_storage = 'https://cvinthewildeus.blob.core.windows.net/datasets'
+        local_temp = config.DATASET.ROOT
+
+        # return [manifest, dataset_info, downloader_resources]
+        results = hub.create_dataset_manifest(vision_dataset_storage, local_temp, config.DATASET.DATASET, usage=Usages.TEST_PURPOSE)
+        if results:
+            test_set, test_set_dataset_info, _ = results
+        logging.info(f'Test size is {len(test_set.images)}.')
+        
+        # re-define transform_clip to organize the labels
+        if test_set_dataset_info.type == DatasetTypes.IC_MULTILABEL:
+            previous_transform = transform_clip
+
+            def transform_clip(x, y):
+                test_set_ = ManifestDataset(test_set_dataset_info, test_set)
+                return (previous_transform(x), multilabel_to_vec(y, len(test_set_.labels)))
+        elif test_set_dataset_info.type == DatasetTypes.IC_MULTICLASS:
+            previous_transform = transform_clip
+
+            def transform_clip(x, y):
+                return (previous_transform(x), multiclass_to_int(y))
+
+        test_dataloader = get_dataloader(TorchDataset(ManifestDataset(test_set_dataset_info, test_set), transform=transform_clip))
+        # download train/val split only if test_split_only is False
+        if not test_split_only:
+            train_set_results = hub.create_dataset_manifest(vision_dataset_storage, local_temp, config.DATASET.DATASET, usage=Usages.TRAIN_PURPOSE)
+            if train_set_results:
+                train_set, train_set_dataset_info, _ = train_set_results
+
+            val_set = None
+            val_set_results = hub.create_dataset_manifest(vision_dataset_storage, local_temp, config.DATASET.DATASET, usage=Usages.VAL_PURPOSE)
+            if val_set_results:
+                val_set, val_set_dataset_info, _ = val_set_results
+
+            # few-shot dataset construction
+            if config.DATASET.NUM_SAMPLES_PER_CLASS > 0:
+                num_samples_per_class = config.DATASET.NUM_SAMPLES_PER_CLASS
+                random_seed = config.DATASET.RANDOM_SEED_SAMPLING
+                train_set = train_set.sample_few_shot_subset(num_samples_per_class, random_seed)
+                
+            val_split=0.2
+            train_dataloader, val_dataloader = get_dataloader(TorchDataset( ManifestDataset(train_set_dataset_info, train_set), transform=transform_clip), val_split=val_split)
+            logging.info(f'Val split from Train set: Train size is {len(train_set.images)*(1-val_split)}, and validation size is {len(train_set.images)*val_split}.')
+
+    elif config.DATASET.DATASET == 'imagenetv2':
+        from imagenetv2_pytorch import ImageNetV2Dataset
+        dataroot = os.path.join(config.DATASET.ROOT, config.DATASET.TEST_SET)
+        if not os.path.exists(dataroot):
+            os.makedirs(dataroot)
+        test_set = ImageNetV2Dataset("matched-frequency", transform=transform_clip, location=dataroot)
+        test_dataloader = get_dataloader(test_set)
+        train_dataloader, val_dataloader = None, None
+    elif config.DATASET.DATASET in ['imagenet-r', 'objectnet', 'imagenet-sketch', 'imagenet-a']:
+        test_set = torchvision.datasets.ImageFolder(os.path.join(config.DATASET.ROOT, config.DATASET.TEST_SET), transform=transform_clip)
+        test_dataloader = get_dataloader(test_set)
+        train_dataloader, val_dataloader = None, None
+    else:
+        if not test_split_only:
+            if config.DATASET.VAL_SET:
+                train_dataloader = get_dataloader(torchvision.datasets.ImageFolder(os.path.join(config.DATASET.ROOT, config.DATASET.TRAIN_SET), transform=transform_clip))
+                val_dataloader = get_dataloader(torchvision.datasets.ImageFolder(os.path.join(config.DATASET.ROOT, config.DATASET.VAL_SET), transform=transform_clip))
+            else:
+                train_dataloader, val_dataloader = get_dataloader(torchvision.datasets.ImageFolder(os.path.join(config.DATASET.ROOT, config.DATASET.TRAIN_SET), transform=transform_clip),
+                                                                    val_split=0.2)
+        test_dataloader = get_dataloader(torchvision.datasets.ImageFolder(os.path.join(config.DATASET.ROOT, config.DATASET.TEST_SET), transform=transform_clip))
+
+    return train_dataloader, val_dataloader, test_dataloader
