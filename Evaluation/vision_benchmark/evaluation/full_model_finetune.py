@@ -314,4 +314,95 @@ def train_one(train_loader, model, criterion, optimizer, epoch, config):
             images = images.cuda(config.GPUS[0], non_blocking=True)
 
         if images.shape[0] == 1: continue # TODO: check this fix on batch left is size-1
-        if target.shape[-1] == 1: target
+        if target.shape[-1] == 1: target = target[:,0]
+        target = target.cuda(config.GPUS[0], non_blocking=True)
+
+        # compute gradient and do SGD step
+        optimizer.zero_grad()
+        output = model.forward(images)
+
+        loss = criterion(output, target)
+        loss.backward()
+
+        if config.TRAIN.CLIP_GRAD_NORM > 0:
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD_NORM)
+
+        optimizer.step()
+        losses.update(loss.item(), images.size(0))
+
+        outputs.append(output)
+        targets.append(target)
+
+        # measure elapsed time
+        batch_time.update(time.time() - end)
+        end = time.time()
+
+    outputs = torch.cat(outputs, dim=0)
+    targets = torch.cat(targets, dim=0)
+    logits = outputs.softmax(-1).data.cpu().numpy()
+    labels = targets.data.cpu().numpy()
+    # TODO: this try except block is used for addressing NaNs on metrics like mAP.
+    try:
+        metric_result = 100. * metric(labels, logits)
+    except:
+        metric_result = 0.
+    logging.info(f'[Epoch {epoch}] Train: {metric_name} {metric_result:.3f}')
+
+
+@torch.no_grad()
+def validate(val_loader, model, criterion, epoch, config, return_logits=False):
+    batch_time = AverageMeter()
+    metric = get_metric(config.TEST.METRIC)
+    metric_name = metric.__name__
+
+    outputs = []
+    targets = []
+
+    model.eval()
+    end = time.time()
+    for batch in val_loader:
+        images, target = batch[:2]
+
+        if len(config.GPUS) == 1:
+            images = images.cuda(config.GPUS[0], non_blocking=True)
+        target = target.cuda(config.GPUS[0], non_blocking=True)
+        if target.shape[-1] == 1: target = target[:,0]
+
+        # compute output
+        output = model(images)
+        outputs.append(output)
+        targets.append(target)
+
+        # measure elapsed time
+        batch_time.update(time.time() - end)
+        end = time.time()
+
+    outputs = torch.cat(outputs, dim=0)
+    targets = torch.cat(targets, dim=0)
+    logits = outputs.softmax(-1).data.cpu().numpy()
+    labels = targets.data.cpu().numpy()
+    # TODO: this try except block is used for addressing NaNs on metrics like mAP.
+    try:
+        metric_result = 100. * metric(labels, logits)
+    except:
+        metric_result = 0.
+    logging.info(f'[Epoch {epoch}] Val: {metric_name} {metric_result:.3f}')
+
+    if return_logits:
+        return metric_result, logits
+    else:
+        return metric_result
+
+
+def adjust_learning_rate(optimizer, epoch, config):
+    """Decay the learning rate based on schedule"""
+    lr = config.TRAIN.LR
+    for milestone in config.TRAIN.SCHEDULE:
+        lr *= 0.1 if epoch >= milestone else 1.
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+
+
+def accuracy(output, target, topk=(1,)):
+    """Computes the accuracy over the k top predictions for the specified values of k"""
+    with torch
