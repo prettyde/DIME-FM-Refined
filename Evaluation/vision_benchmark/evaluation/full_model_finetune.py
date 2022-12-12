@@ -156,3 +156,78 @@ class Classifier(torch.nn.Module):
         outputs = self.logit_scale.exp() * self.layers(outputs)
         return outputs
 
+
+def hyperparameter_sweep(train_dataloader, val_dataloader, config):
+    logging.info(f"=> Learning rate {config.TRAIN.LR}: tuning l2 regularization strength.")
+    start = time.time()
+    l2_lambda_list = np.logspace(config.TRAIN.SEARCH_WD_LOG_LOWER, config.TRAIN.SEARCH_WD_LOG_UPPER, num=97).tolist()
+    l2_lambda_init_idx = [i for i, val in enumerate(l2_lambda_list) if val in set(np.logspace(config.TRAIN.SEARCH_WD_LOG_LOWER, config.TRAIN.SEARCH_WD_LOG_UPPER, num=7))]
+    peak_idx = -1
+    peak_score = 0
+    iter_num = 0
+    for idx in l2_lambda_init_idx:
+        config.defrost()
+        config.TRAIN.WD = l2_lambda_list[idx]
+
+        try:
+            best_score_ = train_task(train_dataloader, val_dataloader, config, sweep_run=True)
+        except:
+            best_score_ = 0.0
+            gpu_gc()
+            continue       
+
+        if best_score_ > peak_score:
+            peak_idx = idx
+            peak_score = best_score_
+    logging.info(f"Iteration {iter_num}: l2_lambda: {l2_lambda_list[peak_idx]}, best score {best_score_}")
+
+    step_span = 8
+    while step_span > 0:
+        left, right = max(peak_idx - step_span, 0), min(peak_idx + step_span, len(l2_lambda_list) - 1)
+        search_idx = []
+        if left != peak_idx:
+            search_idx.append(left)
+        if right != peak_idx:
+            search_idx.append(right)
+        for idx in search_idx:
+            # WD_SEARCH_LEFT is used in the inital release, whereas we later find WD_SEARCH_IDX to be more stable.
+            if config.TRAIN.WD_SEARCH_LEFT:
+                config.TRAIN.WD = l2_lambda_list[left]
+            else:
+                config.TRAIN.WD = l2_lambda_list[idx]
+
+            try:
+                best_score_ = train_task(train_dataloader, val_dataloader, config, sweep_run=True)
+            except:
+                best_score_ = 0.0
+                gpu_gc()
+                continue
+
+            if best_score_ > peak_score:
+                peak_idx = idx
+                peak_score = best_score_
+        iter_num += 1
+        logging.info(f"Iteration {iter_num}: l2_lambda: {l2_lambda_list[peak_idx]}, best score {best_score_}")
+        step_span //= 2
+
+    logging.info(f"=> Learning rate {config.TRAIN.LR}: The best l2 lambda is {l2_lambda_list[peak_idx]}")
+    logging.info('=> Learning rate {}: l2 regularization strength tuning duration time: {:.2f}s'.format(config.TRAIN.LR, time.time() - start))
+    return l2_lambda_list[peak_idx], peak_score
+
+
+def clone_loader(loader, shuffle=True):
+
+    return create_dataloader(
+        loader.dataset,
+        batch_size=loader.batch_size,
+        shuffle=shuffle,
+        num_workers=loader.num_workers,
+        pin_memory=loader.pin_memory,
+    )
+
+
+def train_task(train_dataloader, test_dataloader, config, sweep_run=False):
+    best_acc1 = 0
+
+    model = Classifier(config, 0)
+    pytorch_total_pa
