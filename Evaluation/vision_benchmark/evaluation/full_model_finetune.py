@@ -405,4 +405,76 @@ def adjust_learning_rate(optimizer, epoch, config):
 
 def accuracy(output, target, topk=(1,)):
     """Computes the accuracy over the k top predictions for the specified values of k"""
-    with torch
+    with torch.no_grad():
+        maxk = max(topk)
+        batch_size = target.size(0)
+
+        _, pred = output.topk(maxk, 1, True, True)
+        pred = pred.t()
+        correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+        res = []
+        for k in topk:
+            correct_k = correct[:k].contiguous().view(-1).float().sum(0, keepdim=True)
+            res.append(correct_k.mul_(100.0 / batch_size))
+        return res
+
+
+def hyperparameter_sweep_lr(train_dataloader, val_dataloader, config):
+    logging.info("=> Start hyperparameter tuning.")
+    start = time.time()
+    learning_rate_list = np.logspace(-6, -1, num=6).tolist()
+    best_score = 0
+    best_lr = 0
+    best_l2_lambda = 0
+    for lr_one in learning_rate_list:
+        config.defrost()
+        config.TRAIN.LR = lr_one
+        config.freeze()
+        l2_lambda, best_score_one = hyperparameter_sweep(train_dataloader, val_dataloader, config)
+        logging.info(f"=> Learning rate: {lr_one}, best_score {best_score_one}")
+        if best_score < best_score_one:
+            best_score = best_score_one
+            best_lr = lr_one
+            best_l2_lambda = l2_lambda
+    logging.info(f"Hyper parameter tuning result: learning rate {best_lr}, l2_lambda {best_l2_lambda}")
+    logging.info('=> Hyperparameter tuning duration time: {:.2f}s'.format(time.time() - start))
+    logging.info('=> Finished hyperparameter tuning.')
+    return best_lr, best_l2_lambda
+
+
+def merge_trainval_loader(train_loader, val_loader):
+    # TODO: DataLoader from feature.py get_dataloader()
+    trainset, valset = train_loader.dataset, val_loader.dataset
+    fullset = trainset.dataset
+    assert trainset.dataset is valset.dataset
+    assert len(fullset) == len(trainset) + len(valset)
+
+    return create_dataloader(
+        fullset,
+        batch_size=train_loader.batch_size,
+        shuffle=True,
+        num_workers=train_loader.num_workers,
+        pin_memory=train_loader.pin_memory,
+    )
+
+
+def full_model_finetune(train_dataloader, val_dataloader, test_dataloader, no_hyperparameter_tuning, lr, l2, config):
+
+    if no_hyperparameter_tuning:
+        best_lr = lr
+        best_l2_lambda = l2
+    else:
+        best_lr, best_l2_lambda = hyperparameter_sweep_lr(train_dataloader, val_dataloader, config)
+
+    logging.info("=> The final classifier is on training ...")
+    logging.info(f"Hyperparameters: learning_rate = {best_lr}, l2_lambda = {best_l2_lambda}")
+    config.defrost()
+    config.TRAIN.LR = best_lr
+    config.TRAIN.WD = best_l2_lambda
+    config.TRAIN.END_EPOCH += config.TRAIN.EXTRA_FINAL_TRAIN_EPOCH
+    config.freeze()
+
+    if config.DATASET.DATASET == 'patch-camelyon' and config.DATASET.NUM_SAMPLES_PER_CLASS == 10000:
+        # deal with patch camelyon large dataset (search using 10000-shot subset, final run with the full dataset)
+        logging.info(f'Used th
