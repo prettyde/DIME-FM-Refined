@@ -477,4 +477,19 @@ def full_model_finetune(train_dataloader, val_dataloader, test_dataloader, no_hy
 
     if config.DATASET.DATASET == 'patch-camelyon' and config.DATASET.NUM_SAMPLES_PER_CLASS == 10000:
         # deal with patch camelyon large dataset (search using 10000-shot subset, final run with the full dataset)
-        logging.info(f'Used th
+        logging.info(f'Used the subset to train the model, regenerating the full set for final run.')
+        config.defrost()
+        config.DATASET.NUM_SAMPLES_PER_CLASS = -1
+        config.freeze()
+        logging.info(f'Old: len(train)={len(train_dataloader.dataset)}, len(val)={len(val_dataloader.dataset)}, len(test)={len(test_dataloader.dataset)}.')
+        train_dataloader, val_dataloader, test_dataloader = construct_dataloader(config)
+        logging.info(f'Generated: len(train)={len(train_dataloader.dataset)}, len(val)={len(val_dataloader.dataset)}, len(test)={len(test_dataloader.dataset)}.')
+
+    if config.DATASET.MERGE_TRAIN_VAL_FINAL_RUN:
+        trainval_dataloader = merge_trainval_loader(train_dataloader, val_dataloader)
+        logging.info(f'Using the full trainval set to train final model. len(dataset)={len(trainval_dataloader.dataset)}')
+    else:
+        trainval_dataloader = train_dataloader
+        logging.info(f'Using the train set only to train final model. len(dataset)={len(trainval_dataloader.dataset)}')
+    return train_task(trainval_dataloader, test_dataloader, config)
+
