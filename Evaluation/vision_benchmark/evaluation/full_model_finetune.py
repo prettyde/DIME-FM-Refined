@@ -230,4 +230,88 @@ def train_task(train_dataloader, test_dataloader, config, sweep_run=False):
     best_acc1 = 0
 
     model = Classifier(config, 0)
-    pytorch_total_pa
+    pytorch_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logging.info(f'Number of trainable params: {pytorch_total_params / 1000000}M.')
+
+    train_dataloader = clone_loader(train_dataloader)
+
+    gpu = config.GPUS
+
+    if len(gpu) == 1:
+        torch.cuda.set_device(gpu[0])
+        model = model.cuda(gpu[0])
+
+    # define loss function (criterion) and optimizer
+    if config.DATASET.DATASET in MULTILABEL_DATASETS:
+        criterion = torch.nn.BCEWithLogitsLoss().cuda(gpu)
+    else:
+        criterion = torch.nn.CrossEntropyLoss().cuda(gpu)
+
+    optimizer = build_optimizer(config, model)
+
+    cudnn.benchmark = config.CUDNN.BENCHMARK
+    cudnn.deterministic = config.CUDNN.DETERMINISTIC
+
+    # Generate model statistics
+    model_info = {}
+    visual_backbone = model.backbone.visual if hasattr(model.backbone, 'visual') and model.backbone.visual is not None else model.backbone
+    model_info['n_trainable_params'] = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    model_info['n_visual_params'] = sum(p.numel() for p in visual_backbone.parameters())
+    model_info['n_backbone_params'] = sum(p.numel() for p in model.backbone.parameters())
+    model_info['n_params'] = sum(p.numel() for p in model.parameters())
+
+    for epoch in range(config.TRAIN.BEGIN_EPOCH, config.TRAIN.END_EPOCH):
+        adjust_learning_rate(optimizer, epoch, config)
+
+        # train for one epoch
+        if not config.TRAIN.EMULATE_ZERO_SHOT:
+            train_one(train_dataloader, model, criterion, optimizer, epoch, config)
+
+        # evaluate on validation set
+        acc1, logits = validate(test_dataloader, model, criterion, epoch, config, return_logits=True)
+
+        # remember best acc@1 and save checkpoint
+        if acc1 > best_acc1:
+            model_info['best_logits'] = logits
+        best_acc1 = max(acc1, best_acc1)
+
+    logging.info(f'=> Learning rate {config.TRAIN.LR}, L2 lambda {config.TRAIN.WD}: Best score: Acc@1 {best_acc1:.3f}')
+
+    if sweep_run and config.TRAIN.SEARCH_RESULT_ON_LAST_EPOCH:
+        return acc1
+
+    del model, criterion, optimizer
+    gpu_gc()
+
+    if sweep_run:
+        return best_acc1
+    else:
+        return best_acc1, model_info
+
+
+
+def train_one(train_loader, model, criterion, optimizer, epoch, config):
+    batch_time = AverageMeter()
+    data_time = AverageMeter()
+    losses = AverageMeter()
+    metric = get_metric(config.TEST.METRIC)
+    metric_name = metric.__name__
+
+    outputs = []
+    targets = []
+
+    model.train()
+
+    end = time.time()
+    for _,  batch in enumerate(train_loader):
+
+        images, target = batch[:2]
+
+        # measure data loading time
+        data_time.update(time.time() - end)
+
+        if len(config.GPUS) == 1:
+            images = images.cuda(config.GPUS[0], non_blocking=True)
+
+        if images.shape[0] == 1: continue # TODO: check this fix on batch left is size-1
+        if target.shape[-1] == 1: target
