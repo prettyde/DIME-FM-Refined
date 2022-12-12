@@ -94,4 +94,65 @@ class Classifier(torch.nn.Module):
                 if name.startswith('visual.conv1') or name.startswith('visual.ln_pre') or name.startswith('visual.transformer') or name.startswith('visual'):
                     param.requires_grad = False
 
-        input_dim, output_dim = config.MO
+        input_dim, output_dim = config.MODEL.SPEC.EMBED_DIM, config.DATASET.NUM_CLASSES
+        self.optim = None
+        self.l2_lambda = l2_lambda
+        self.channel_bn = torch.nn.BatchNorm1d(
+            input_dim,
+            affine=False,
+        )
+        self.layers = torch.nn.Sequential(torch.nn.Linear(input_dim, output_dim))
+
+        if config.TRAIN.INIT_HEAD_WITH_TEXT_ENCODER:
+            if config.MODEL.SPEC.TEXT.TOKENIZER == 'clip':
+                tokenizer = SimpleTokenizer()
+            elif 'hf_' in config.MODEL.SPEC.TEXT.TOKENIZER:
+                tokenizer = HFPTTokenizer(pt_name=config.MODEL.SPEC.TEXT.TOKENIZER[3:])
+            else:
+                tokenizer = None
+
+            zeroshot_weights = extract_text_features(config, tokenizer, model=self.backbone, return_numpy=False)
+            self.layers[0].weight.data = zeroshot_weights.T.to(self.layers[0].weight.dtype).to(self.layers[0].weight.device).contiguous()
+            self.layers[0].bias.data.fill_(0.0)
+
+        if config.TRAIN.MERGE_ENCODER_AND_HEAD_PROJ and self.backbone.visual.proj is not None:
+            encoder_proj = self.backbone.visual.proj
+            head_proj = self.layers[0].weight.data
+            head_bias = self.layers[0].bias.data
+            self.backbone.visual.proj = None
+            encoder_ic, encoder_oc = encoder_proj.shape
+            self.channel_bn = torch.nn.BatchNorm1d(
+                encoder_ic,
+                affine=False,
+            )
+            self.layers = torch.nn.Sequential(torch.nn.Linear(encoder_ic, output_dim))
+            self.layers[0].weight.data = head_proj @ encoder_proj.T.to(head_proj.dtype).to(head_proj.device)
+            self.layers[0].bias.data = head_bias
+
+        self.logit_scale = nn.Parameter(torch.ones([]))
+        self.logit_scale.requires_grad = config.TRAIN.TRAINABLE_LOGIT_SCALE
+        if config.TRAIN.LOGIT_SCALE_INIT == 'pretrained':
+            self.logit_scale.data = self.backbone.logit_scale.data.to(self.logit_scale.dtype).to(self.logit_scale.device)
+        elif config.TRAIN.LOGIT_SCALE_INIT == 'ln_cls':
+            self.logit_scale.data *= np.log(np.log(config.DATASET.NUM_CLASSES))
+        elif config.TRAIN.LOGIT_SCALE_INIT == 'clip':
+            self.logit_scale.data *= np.log(1 / 0.07)
+        else:
+            self.logit_scale.data *= 0
+
+        self.normalize_visual_output = config.TRAIN.NORMALIZE_VISUAL_FEATURE
+
+        if not config.TRAIN.USE_CHANNEL_BN:
+            self.channel_bn = nn.Identity()
+
+    def forward(self, img):
+        pdtype = img.dtype
+        feature = self.backbone(img).to(pdtype)
+        outputs = self.channel_bn(feature)
+
+        if self.normalize_visual_output:
+            outputs = F.normalize(outputs)
+
+        outputs = self.logit_scale.exp() * self.layers(outputs)
+        return outputs
+
