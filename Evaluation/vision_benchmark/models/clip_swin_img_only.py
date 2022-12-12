@@ -141,4 +141,75 @@ class Transformer(nn.Module):
         x = x + self.positional_embedding
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.resblocks(x)
-        x = x.permute(1, 0, 2)  # LND -
+        x = x.permute(1, 0, 2)  # LND -> NLD
+
+        x = self.ln_final(x)
+
+        x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)]
+
+        return x
+
+
+class CLIP_img_student(nn.Module):
+    def __init__(self, config: dict,):
+        super().__init__()
+
+        teacher_model, _ = clip.load('ViT-L/14', jit=False)
+        teacher_model = teacher_model.float()
+        self.transformer = teacher_model.transformer
+        self.token_embedding = teacher_model.token_embedding
+        self.positional_embedding = teacher_model.positional_embedding
+        self.ln_final = teacher_model.ln_final
+        self.text_projection = teacher_model.text_projection
+
+        embed_dim = config['MODEL']['SPEC']['EMBED_DIM']
+
+        spec_vision = config['MODEL']['SPEC']['VISION']
+        self.visual = SwinTransformer(
+            img_size=config['TRAIN']['IMAGE_SIZE'][0],
+            patch_size=spec_vision['PATCH_SIZE'],
+            in_chans=spec_vision['IN_CHANS'],
+            num_classes=0,
+            embed_dim=spec_vision['EMBED_DIM'],
+            depths=spec_vision['DEPTHS'],
+            num_heads=spec_vision['NUM_HEADS'],
+            window_size=spec_vision['WINDOW_SIZE'],
+            mlp_ratio=spec_vision['MLP_RATIO'],
+            qkv_bias=spec_vision['QKV_BIAS'],
+            qk_scale=spec_vision.get('QK_SCALE', None),
+            drop_rate=spec_vision['DROP_RATE'],
+
+            ape=spec_vision['APE'],
+            patch_norm=spec_vision['PATCH_NORM'],
+            use_checkpoint=False,
+            layer_scale=spec_vision.get('LAYER_SCALE', False)
+        )
+        width = spec_vision['EMBED_DIM'] * 2 ** (len(spec_vision['DEPTHS']) - 1)
+        self.vision_projection = nn.Parameter(
+            torch.empty(width, embed_dim)
+        )
+        # self.logit_scale = nn.Parameter(torch.FloatTensor([np.log(1 / 0.07)]))
+        self.logit_scale = nn.Parameter(torch.ones([]))
+
+        trunc_normal_(self.vision_projection, std=.02)
+
+    def init_weights(self, pretrained='', pretrained_layers=[], verbose=True):
+        if os.path.isfile(pretrained):
+            pretrained_dict = torch.load(pretrained, map_location='cpu')
+            logger.info(f'=> loading pretrained model {pretrained}')
+            model_dict = self.state_dict()
+            pretrained_dict = {
+                k: v for k, v in pretrained_dict.items()
+                if k in model_dict.keys()
+            }
+            need_init_state_dict = {}
+            for k, v in pretrained_dict.items():
+                need_init = (
+                        k.split('.')[0] in pretrained_layers
+                        or pretrained_layers[0] is '*'
+                )
+                if need_init:
+                    if verbose:
+                        logging.info(f'=> init {k} from {pretrained}')
+                    need_init_state_dict[k] = v
+            self.load_state_dict(need_init_state
