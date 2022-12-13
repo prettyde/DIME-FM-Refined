@@ -120,4 +120,40 @@ class FILIP(CLIP):
         if self.training and self.use_allgather:
             link.barrier()
             gathered_image_features_1 = self.all_gather(image_features_1)
-            gathered_text_features =
+            gathered_text_features = self.all_gather(text_features)
+            logits_per_image_1 = logit_scale * image_features_1 @ gathered_text_features.t()
+            logits_per_text_1 = logit_scale * text_features @ gathered_image_features_1.t()    
+        # filip
+        if self.return_dense:
+            image_features_d1 = image_features_d
+            image_features_d1 = self.image_mapping(image_features_d1)
+            word_features_d = self.text_mapping(word_features)
+            logits_per_image_dense_1, logits_per_text_dense_1 = self.get_weighted_dense_logits(image_features_d1, word_features_d)
+        if return_dict:
+            ret_dict = {}
+            ret_dict['logits'] = logits_per_image_1, logits_per_text_1
+            if self.return_dense:
+                ret_dict['dense_logits'] = logits_per_image_dense_1, logits_per_text_dense_1
+            return ret_dict
+        raise NotImplementedError()
+
+
+
+def filip_res50(**kwargs):
+    """'
+    Constructs a vit mae model.
+    """
+    image_encode = modified_resnet_R50(**kwargs['image_encode'])
+    text_encode = text_transformers(**kwargs['text_encode'])
+    model = FILIP(image_encode,text_encode,**kwargs['clip'], dense_mapping_image=2048)
+    return model
+
+
+def filip_vitb32(**kwargs):
+    """'
+    Constructs a vit mae model.
+    """
+    image_encode = visual_transformer_B32(**kwargs['image_encode'])
+    text_encode = text_transformers(**kwargs['text_encode'])
+    model = FILIP(image_encode,text_encode,**kwargs['clip'], dense_mapping_image=768)
+    return model
