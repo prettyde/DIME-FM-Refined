@@ -1,0 +1,5 @@
+# GPUS: (0,)
+DATASET:
+  DATASET: 'country211'
+  ROOT: '../DATASET/country211/'
+  NUM_C

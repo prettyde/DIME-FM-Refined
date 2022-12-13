@@ -37,4 +37,69 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
         B = x.shape[0]
         x = self.patch_embed(x)
 
-        cls_tokens = self.cls_token.expand(B, -1, -1)  # stole 
+        cls_tokens = self.cls_token.expand(B, -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
+        x = torch.cat((cls_tokens, x), dim=1)
+        x = x + self.pos_embed
+        x = self.pos_drop(x)
+
+        for blk in self.blocks:
+            x = blk(x)
+
+        if self.global_pool:
+            x = x[:, 1:, :].mean(dim=1)  # global pool without cls token
+            outcome = self.fc_norm(x)
+        else:
+            x = self.norm(x)
+            outcome = x[:, 0]
+
+        return outcome
+
+
+def vit_base_patch16(**kwargs):
+    model = VisionTransformer(
+        patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+    return model
+
+
+def vit_large_patch16(**kwargs):
+    model = VisionTransformer(
+        patch_size=16, embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+    return model
+
+
+def vit_huge_patch14(**kwargs):
+    model = VisionTransformer(
+        patch_size=14, embed_dim=1280, depth=32, num_heads=16, mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+    return model
+
+def get_model(config):
+    mae_specs = config.MODEL.SPEC
+
+    model = VisionTransformer(
+        patch_size=mae_specs.PATCH_SIZE, embed_dim=mae_specs.EMBED_DIM,
+        depth=mae_specs.DEPTH, num_heads=mae_specs.NUM_HEADS, mlp_ratio=mae_specs.MLP_RATIO,
+        qkv_bias=mae_specs.QKV_BIAS,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        global_pool=mae_specs.GLOBAL_POOL)
+
+    model_file = config.TEST.MODEL_FILE
+    logging.info(f'=> load model file: {model_file}')
+
+    if model_file.startswith('http'):
+        checkpoint = torch.hub.load_state_dict_from_url(model_file, progress=False, map_location="cpu")
+    else:
+        checkpoint = torch.load(model_file, map_location="cpu")
+
+    state_dict = checkpoint['model']
+
+    incompatible = model.load_state_dict(state_dict, strict=False)
+
+    if incompatible.missing_keys:
+        logging.warning('Missing keys: {}'.format(', '.join(incompatible.missing_keys)))
+    if incompatible.unexpected_keys:
+        logging.warning('Unexpected keys: {}'.format(', '.join(incompatible.unexpected_keys)))
+
+    return model
