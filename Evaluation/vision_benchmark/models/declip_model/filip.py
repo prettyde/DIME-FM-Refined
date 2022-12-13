@@ -62,4 +62,62 @@ class FILIP(CLIP):
 
     def encode_image(self, image, return_all=False):
         output = self.visual(image.type(self.dtype), return_dense=return_all)
-   
+        return output
+
+    def get_weighted_dense_logits(self, dense_feat_1, dense_feat_2, top_k=16):
+        dense_feat_1 = dense_feat_1 / dense_feat_1.norm(dim=-1, keepdim=True)
+        dense_feat_2 = dense_feat_2 / dense_feat_2.norm(dim=-1, keepdim=True)
+
+        logit_scale_dense = self.logit_scale_dense.exp()
+
+
+        if self.select_topk:
+            dense_feat_cross_logit = torch.matmul(dense_feat_1, dense_feat_2.permute(0, 2, 1))
+            _, dense_id_1 = torch.topk(dense_feat_cross_logit.sum(dim=2), dim=1, k=top_k)
+            _, dense_id_2 = torch.topk(dense_feat_cross_logit.sum(dim=1), dim=1, k=top_k)
+            bs, n1 = dense_feat_1.shape[:2]
+            dense_id_1 = dense_id_1 + (torch.arange(bs) * n1).to(dense_id_1.device)[:, None]
+            selected_feat_1 = dense_feat_1.reshape(bs * n1, -1)[dense_id_1].reshape(bs, top_k, -1)
+            bs, n2 = dense_feat_2.shape[:2]
+            dense_id_2 = dense_id_2 + (torch.arange(bs) * n2).to(dense_id_2.device)[:, None]
+            selected_feat_2 = dense_feat_2.reshape(bs * n2, -1)[dense_id_2].reshape(bs, top_k, -1)
+
+#         selected_feat_1 = dense_feat_1
+#         selected_feat_2 = dense_feat_2
+
+        selected_feat_1 = self.all_gather(selected_feat_1)
+        selected_feat_2 = self.all_gather(selected_feat_2)
+
+
+        def get_logits(dense_feat_1, selected_feat_2):
+            i, j, k = dense_feat_1.shape
+            l, m, k = selected_feat_2.shape
+            dense_feat_1 = dense_feat_1.reshape(-1, k)
+            selected_feat_2 = selected_feat_2.reshape(-1, k)
+            final_logits_1 = logit_scale_dense * dense_feat_1 @ selected_feat_2.t()
+            final_logits_1 = final_logits_1.reshape(i, j, l, m).permute(0,2,1,3)
+            return final_logits_1
+        final_logits_1 = get_logits(dense_feat_1, selected_feat_2).max(dim=-1)[0].mean(dim=-1)
+        final_logits_2 = get_logits(dense_feat_2, selected_feat_1).max(dim=-1)[0].mean(dim=-1)
+        return final_logits_1, final_logits_2
+
+
+    def forward(self, input, return_dict=False):
+        # data input
+        images = input['images']
+        images_1, _ = torch.split(images, [3,3], dim=1)
+        texts = input['captions']
+        texts = self.sample_captions(texts)
+        # text
+        text_features, word_features, text_labels = self.encode_text(texts, mask_type = self.text_mask_type)
+        # image
+        image_concat = images_1
+        image_features_1, image_features_d = self.encode_image(image_concat, return_all=True)
+        # clip
+        logit_scale = self.logit_scale.exp()
+        image_features_1 = image_features_1 / (image_features_1.norm(dim=-1, keepdim=True))
+        text_features = text_features / (text_features.norm(dim=-1, keepdim=True)+1e-10)
+        if self.training and self.use_allgather:
+            link.barrier()
+            gathered_image_features_1 = self.all_gather(image_features_1)
+            gathered_text_features =
