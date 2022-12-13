@@ -212,4 +212,74 @@ class CLIP_img_student(nn.Module):
                     if verbose:
                         logging.info(f'=> init {k} from {pretrained}')
                     need_init_state_dict[k] = v
-            self.load_state_dict(need_init_state
+            self.load_state_dict(need_init_state_dict, strict=False)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        no_weight_decay = {'logit_scale'}
+        for k in self.text.no_weight_decay():
+            no_weight_decay.add('text.'+k)
+
+        for k in self.visual.no_weight_decay():
+            no_weight_decay.add('visual.'+k)
+
+        return no_weight_decay
+
+    @torch.jit.ignore
+    def no_weight_decay_keywords(self):
+        return {'relative_position_bias_table'}
+
+    @property
+    def dtype(self):
+        for name, _ in self.named_parameters():
+            param = getattr(self, name)
+            return param.dtype
+
+    def encode_image(self, image, norm=True):
+        x = self.visual.forward_features(image)
+        x = x @ self.vision_projection
+
+        if norm:
+            x = x / x.norm(dim=-1, keepdim=True)
+
+        return x
+
+    def encode_text(self, text, norm=True):
+        x = self.token_embedding(text).type(self.dtype)  # [batch_size, n_ctx, d_model]
+
+        x = x + self.positional_embedding.type(self.dtype)
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        x = self.transformer(x)
+        x = x.permute(1, 0, 2)  # LND -> NLD
+        x = self.ln_final(x).type(self.dtype)
+
+        # x.shape = [batch_size, n_ctx, transformer.width]
+        # take features from the eot embedding (eot_token is the highest number in each sequence)
+        x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+        if norm:
+            x = x / x.norm(dim=-1, keepdim=True)
+
+        return x
+
+    def forward(self, image, text):
+        features_image = self.encode_image(image)
+        features_text = self.encode_text(text)
+
+        # cosine similarity as logits
+        T = self.logit_scale.exp()
+
+        return features_image, features_text, T
+
+
+
+def get_zeroshot_model(config, **kwargs):
+    model = CLIP_img_student(config)
+
+    if config['MODEL']['INIT_WEIGHTS']:
+        model.init_weights(
+            config['MODEL']['PRETRAINED'],
+            ["visual", 'vision_projection'],
+            config['VERBOSE']
+        )
+
+    return model
