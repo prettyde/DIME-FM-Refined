@@ -483,3 +483,100 @@
     "name": "stanford-cars",
     "description": "The Cars dataset contains 16,185 images of 196 classes of cars. The data is split into 8,144 training images and 8,041 testing images, where each class has been split roughly in a 50-50 split. Classes are typically at the level of Make, Model, Year, e.g. 2012 Tesla Model S or 2012 BMW M3 coupe.",
     "contact": "pinjin",
+    "version": 1,
+    "type": "classification_multiclass",
+    "root_folder": "classification/stanford_cars_20211007",
+    "labelmap": "labels.txt",
+    "num_classes": 196,
+    "train": {
+      "index_path": "train.txt",
+      "files_for_local_usage": [
+        "train.zip"
+      ],
+      "num_images": 8144
+    },
+    "test": {
+      "index_path": "test.txt",
+      "files_for_local_usage": [
+        "val.zip"
+      ],
+      "num_images": 8041
+    }
+  },
+  {
+    "name": "fer-2013",
+    "description": "The data consists of 48x48 pixel grayscale images of faces. The task is to categorize each face based on the emotion shown in the facial expression into one of seven categories (0=Angry, 1=Disgust, 2=Fear, 3=Happy, 4=Sad, 5=Surprise, 6=Neutral).",
+    "contact": "pinjin",
+    "version": 1,
+    "type": "classification_multiclass",
+    "root_folder": "classification/fer_2013_20211008",
+    "labelmap": "labels.txt",
+    "num_classes": 7,
+    "train": {
+      "index_path": "train.txt",
+      "files_for_local_usage": [
+        "train.zip"
+      ],
+      "num_images": 28709
+    },
+    "val": {
+      "index_path": "val.txt",
+      "files_for_local_usage": [
+        "val.zip"
+      ],
+      "num_images": 3589
+    },
+    "test": {
+      "index_path": "test.txt",
+      "files_for_local_usage": [
+        "test.zip"
+      ],
+      "num_images": 3589
+    }
+  },
+  {
+    "name": "hateful-memes",
+    "version": 1,
+    "type": "classification_multiclass",
+    "description": "At the massive scale of the internet, the task of detecting multimodal hate is both extremely important and particularly difficult. Relying on just text or just images to determine whether a meme is hateful is insufficient. By using certain types of images, text, or combinations, a meme can become a multimodal type of hate speech.",
+    "format": "coco",
+    "root_folder": "classification/hateful_memes_20211014",
+    "train": {
+      "index_path": "train_meta.json",
+      "files_for_local_usage": [
+        "img.zip"
+      ],
+      "num_images": 8500
+    },
+    "test": {
+      "index_path": "test_meta.json",
+      "files_for_local_usage": [
+        "img.zip"
+      ],
+      "num_images": 500
+    },
+    "num_classes": 2
+  },
+  {
+    "name": "imagenet-1k",
+    "version": 1,
+    "description": "imagenet 1k dataset (test only). Copy from Chunyuan's team",
+    "type": "classification_multiclass",
+    "root_folder": "classification/imagenet_1k_20220105",
+    "format": "coco",
+    "train": {
+      "index_path": "train.json",
+      "files_for_local_usage": [
+        "train_images.zip"
+      ],
+      "num_images": 0
+    },    
+    "test": {
+        "index_path": "val.json",
+        "files_for_local_usage": [
+            "val_images.zip"
+        ],
+        "num_images": 50000
+    }
+  }  
+]
