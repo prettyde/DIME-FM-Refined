@@ -2,4 +2,6 @@
 DATASET:
   DATASET: 'country211'
   ROOT: '../DATASET/country211/'
-  NUM_C
+  NUM_CLASSES: 211
+TEST:
+  METRIC: 'accuracy'
