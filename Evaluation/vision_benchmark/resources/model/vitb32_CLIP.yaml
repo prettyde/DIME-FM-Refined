@@ -6,17 +6,17 @@ INPUT:
   STD: [0.26862954, 0.26130258, 0.27577711]
 
 MODEL:
-  NAME: 'ViT-B/16'
+  NAME: 'ViT-B/32'
   NUM_PARAMS_IN_M: 151.2
   AUTHOR: 'OpenAI'
   PRETRAINED_DATA: 'CLIP-data'
   CREATION_TIME: '2021-01-05'
-
+# Following configuration is needed for runing linear probe with Pytorch based linear model.
   SPEC:
     EMBED_DIM: 512
     VISION:
       MODEL: vit
-      PATCH_SIZE: 16
+      PATCH_SIZE: 32
       WIDTH: 384
       LAYERS: 12
     TEXT:
