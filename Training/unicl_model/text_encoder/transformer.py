@@ -104,4 +104,79 @@ class Transformer(nn.Module):
             ]
         )
 
- 
+        self.ln_final = LayerNorm(width)
+
+        trunc_normal_(self.positional_embedding, std=.02)
+        # nn.init.normal_(self.token_embedding, std=.02)
+        trunc_normal_(self.token_embedding.weight, std=.02)
+        self.apply(self._init_weights)
+
+    @property
+    def dim_out(self):
+        return self.width
+
+    def build_attention_mask(self):
+        # lazily create causal attention mask, with full attention between the vision tokens
+        # pytorch uses additive attention mask; fill with -inf
+        mask = torch.empty(self.context_length, self.context_length)
+        mask.fill_(float("-inf"))
+        mask.triu_(1)  # zero out the lower diagonal
+        return mask
+
+    def _init_weights(self, m):
+        if isinstance(m, (nn.Linear, nn.Conv2d)):
+            # logger.info('=> init weight of Linear/Conv2d from trunc norm')
+            trunc_normal_(m.weight, std=0.02)
+            if m.bias is not None:
+                # logger.info('=> init bias of Linear/Conv2d to zeros')
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, (nn.LayerNorm, nn.BatchNorm2d)):
+            nn.init.constant_(m.bias, 0)
+
+    def load_pretrained(self, pretrained='', pretrained_layers=[], verbose=True):
+        if os.path.isfile(pretrained):
+            pretrained_dict = torch.load(pretrained, map_location='cpu')
+            logging.info(f'=> loading pretrained model {pretrained}')
+            model_dict = self.state_dict()
+            pretrained_dict = {
+                k: v for k, v in pretrained_dict.items()
+                if k in model_dict.keys()
+            }
+            need_init_state_dict = {}
+            for k, v in pretrained_dict.items():
+                need_init = (
+                    k.split('.')[0] in pretrained_layers
+                    or pretrained_layers[0] == '*'
+                )
+                if need_init:
+                    if verbose:
+                        logging.info(f'=> init {k} from {pretrained}')
+
+                    need_init_state_dict[k] = v
+            self.load_state_dict(need_init_state_dict, strict=False)
+
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {
+            'positional_embedding',
+            'token_embedding',
+        }
+
+    def forward(self, input_ids, attention_mask=None):
+        key_padding_mask = (input_ids == 0) if not self.autogressive else None
+        x = self.token_embedding(input_ids)  # [batch_size, n_ctx, d_model]
+        x = x + self.positional_embedding
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        for block in self.resblocks:
+            x = block(x, key_padding_mask)
+        x = x.permute(1, 0, 2)  # LND -> NLD
+
+        x = self.ln_final(x)
+
+        return {'last_hidden_state': x}
+
+
+def lang_encoder(VOCAB_SIZE,  WIDTH, LAYERS, HEADS):
+    transformer = Transformer(
+        co
