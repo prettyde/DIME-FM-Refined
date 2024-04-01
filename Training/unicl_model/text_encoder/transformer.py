@@ -179,4 +179,12 @@ class Transformer(nn.Module):
 
 def lang_encoder(VOCAB_SIZE,  WIDTH, LAYERS, HEADS):
     transformer = Transformer(
-        co
+        context_length=77,
+        vocab_size=VOCAB_SIZE,
+        width=WIDTH,
+        layers=LAYERS,
+        heads=HEADS,
+        autogressive=True
+    )
+
+    return transformer
